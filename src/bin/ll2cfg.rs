@@ -1,6 +1,7 @@
 use regex::Regex;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
+use std::os::unix::raw::mode_t;
 use std::path::Path;
 use clap::Parser;
 
@@ -114,7 +115,7 @@ fn dump_cfg(output: &mut dyn Write, function: &Function, abbr: bool)  {
 
 fn parse_ll_file<R: Read>(reader: &mut io::BufReader<R>) -> io::Result<Vec<Function>>{
 
-    let define_re = Regex::new(r"^define\s+.*@([a-zA-Z0-9_]+)\s*\(").unwrap();
+    let define_re = Regex::new(r"^define\s+.*@([a-zA-Z0-9_\.]+)\s*\(.*\)\s*(.*)\s*\{$").unwrap();
 
     let mut functions: Vec<Function> = vec![];
 
@@ -123,7 +124,7 @@ fn parse_ll_file<R: Read>(reader: &mut io::BufReader<R>) -> io::Result<Vec<Funct
         let line = line?;
         if let Some(caps) = define_re.captures(&line) {
             if let Some(func_name) = caps.get(1).map(|m| m.as_str().to_string()) {
-                let blocks = parse_blocks(&mut lines);
+                let blocks = parse_function(&mut lines);
                 let current_function = Function {
                     name: func_name.clone(),
                     define: line.clone(),
@@ -140,41 +141,48 @@ fn parse_ll_file<R: Read>(reader: &mut io::BufReader<R>) -> io::Result<Vec<Funct
     Ok(functions)
 }
 
-fn parse_blocks<R: Read>(lines: &mut io::Lines<&mut BufReader<R>>) -> Vec<BasicBlock> {
-    let block_name_re = Regex::new(r"^([0-9]+):\s*; preds = (.*)$").unwrap();
+fn parse_function<R: Read>(lines: &mut io::Lines<&mut BufReader<R>>) -> Vec<BasicBlock> {
+    let block_name_re = Regex::new(r"^([0-9a-zA-Z_]+):(\s*;\s*preds\s*=\s*(.*))?$").unwrap();
     let jump_re = Regex::new(r"^\s*br\s+(.*)").unwrap();
 
     let mut blocks: Vec<BasicBlock> = vec![];
-    let mut current_block = BasicBlock {
-        name: "".to_string(),
-        instructions: vec![],
-        predecessors: vec![],
-        successors: vec![],
-    };
+    let mut current_block: Option<BasicBlock> = None;
 
     while let Some(line) = lines.next() {
         let line = line.unwrap();
         if let Some(caps) = block_name_re.captures(&line) {
             if let Some(block_name) = caps.get(1).map(|m| m.as_str().to_string()) {
-                blocks.push(current_block.clone());
-                current_block = BasicBlock {
+                if let Some(block) = current_block {
+                    blocks.push(block.clone());
+                }
+
+                let predecessors = caps.get(3).map(|m| m.as_str().to_string())
+                    .map(|s| s.split(", ").map(|s| s.to_string()).collect::<Vec<String>>() )
+                    .unwrap_or(vec![]);
+
+                current_block = Some(BasicBlock {
                     name: block_name.clone(),
+                    instructions: vec![],
+                    predecessors,
+                    successors: vec![],
+                });
+            }
+        } else if line == "}" {
+            if let Some(block) = &current_block {
+                blocks.push(block.clone());
+                break;
+            }
+        }
+        else {
+            if current_block.is_none() {
+                current_block = Some(BasicBlock {
+                    name: "%1".to_string(),
                     instructions: vec![],
                     predecessors: vec![],
                     successors: vec![],
-                };
-
-                let preds = caps.get(2).map(|m| m.as_str().to_string());
-                if let Some(preds) = preds {
-                    let preds = preds.split(", ").map(|s| s.to_string()).collect();
-                    current_block.predecessors = preds;
-                }
+                });
             }
-        } else if line == "}" {
-                blocks.push(current_block.clone());
-                break;
-        }
-        else {
+            let current_block: &mut BasicBlock = current_block.as_mut().unwrap();
             current_block.instructions.push(line.clone());
             if let Some(caps) = jump_re.captures(&line) {
                 if let Some(jump_content) = caps.get(1).map(|m| m.as_str().to_string()) {
@@ -187,7 +195,9 @@ fn parse_blocks<R: Read>(lines: &mut io::Lines<&mut BufReader<R>>) -> Vec<BasicB
         }
     }
 
-    blocks.push(current_block);
+    if let Some(block) = current_block {
+        blocks.push(block.clone());
+    }
 
     blocks
 }
