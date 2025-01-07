@@ -1,7 +1,6 @@
 use regex::Regex;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::os::unix::raw::mode_t;
 use std::path::Path;
 use clap::Parser;
 
@@ -142,7 +141,7 @@ fn parse_ll_file<R: Read>(reader: &mut io::BufReader<R>) -> io::Result<Vec<Funct
 }
 
 fn parse_function<R: Read>(lines: &mut io::Lines<&mut BufReader<R>>) -> Vec<BasicBlock> {
-    let block_name_re = Regex::new(r"^([0-9a-zA-Z_]+):(\s*;\s*preds\s*=\s*(.*))?$").unwrap();
+    let block_name_re = Regex::new(r"^([0-9a-zA-Z_\.]+):(\s*;\s*preds\s*=\s*(.*))?$").unwrap();
     let jump_re = Regex::new(r"^\s*br\s+(.*)").unwrap();
 
     let mut blocks: Vec<BasicBlock> = vec![];
