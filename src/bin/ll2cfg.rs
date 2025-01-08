@@ -108,6 +108,14 @@ fn dump_cfg(output: &mut dyn Write, function: &Function, abbr: bool)  {
             let block_label = block.instructions.join("\n");
             _ = writeln!(output, "{}[\"{}\"]", block_name, block_label);
         }
+        let is_return = block.instructions.last().iter().any(|s| s.trim().starts_with("ret "));
+        let is_unreachable = block.instructions.last().iter().any(|s| s.trim().starts_with("unreachable"));
+        if is_return {
+            _ = writeln!(output, "style {block_name} stroke:#0f0");
+        }
+        if is_unreachable {
+            _ = writeln!(output, "style {block_name} stroke:#f00");
+        }
     });
     _ = writeln!(output, "```").unwrap();
 }
@@ -149,7 +157,8 @@ fn parse_function<R: Read>(lines: &mut io::Lines<&mut BufReader<R>>) -> Vec<Basi
 
     while let Some(line) = lines.next() {
         let line = line.unwrap();
-        if let Some(caps) = block_name_re.captures(&line) {
+
+        if let Some(caps) = block_name_re.captures(&line) { // name: ; preds = a, b, c
             if let Some(block_name) = caps.get(1).map(|m| m.as_str().to_string()) {
                 if let Some(block) = current_block {
                     blocks.push(block.clone());
@@ -166,13 +175,11 @@ fn parse_function<R: Read>(lines: &mut io::Lines<&mut BufReader<R>>) -> Vec<Basi
                     successors: vec![],
                 });
             }
-        } else if line == "}" {
-            if let Some(block) = &current_block {
-                blocks.push(block.clone());
-                break;
-            }
         }
-        else {
+        else if line == "}" { // end of function
+            break;
+        }
+        else { // instruction inside block
             if current_block.is_none() {
                 current_block = Some(BasicBlock {
                     name: "%1".to_string(),
@@ -182,7 +189,9 @@ fn parse_function<R: Read>(lines: &mut io::Lines<&mut BufReader<R>>) -> Vec<Basi
                 });
             }
             let current_block: &mut BasicBlock = current_block.as_mut().unwrap();
-            current_block.instructions.push(line.clone());
+            if line.trim()  != "" {
+                current_block.instructions.push(line.clone());
+            }
             if let Some(caps) = jump_re.captures(&line) {
                 if let Some(jump_content) = caps.get(1).map(|m| m.as_str().to_string()) {
                     jump_content.split(',').filter(|s| s.contains("label ")).for_each(|s| {
